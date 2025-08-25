@@ -5,10 +5,15 @@ const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Enable CORS for all routes
 app.use(cors());
 
 const TARGET_BASE_URL = 'http://mains.services';
+
+// Spoof headers to make our request look like a real browser
+const BROWSER_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36',
+    'Referer': `${TARGET_BASE_URL}/` // Pretend the request is coming from their own site
+};
 
 // Playlist route
 app.get('/*.(m3u|m3u8)', async (req, res) => {
@@ -19,14 +24,12 @@ app.get('/*.(m3u|m3u8)', async (req, res) => {
     try {
         const response = await axios.get(targetUrl, { 
             responseType: 'text',
-            timeout: 10000 
+            timeout: 10000,
+            headers: BROWSER_HEADERS // Use the spoofed headers
         });
         console.log('SUCCESS: Playlist content received from source.');
 
-        // --- THIS IS THE FIX ---
-        // Force the protocol to https, as Render forwards requests internally over http.
         const myProxyUrl = `https://${req.get('host')}`;
-
         const rewrittenPlaylist = response.data.replace(/^\/.+$/gm, (match) => `${myProxyUrl}${match}`);
         
         console.log(`Rewriting segments to use base URL: ${myProxyUrl}`);
@@ -43,14 +46,17 @@ app.get('/*.(m3u|m3u8)', async (req, res) => {
     }
 });
 
-// General route for video segments
+// Video Segment route
 app.get('/play/hls/*', async (req, res) => {
     const segmentPath = req.path;
     const targetUrl = `${TARGET_BASE_URL}${segmentPath}`;
 
     try {
         console.log(`Fetching HLS segment: ${targetUrl}`);
-        const response = await axios.get(targetUrl, { responseType: 'stream' });
+        const response = await axios.get(targetUrl, { 
+            responseType: 'stream',
+            headers: BROWSER_HEADERS // Use the spoofed headers
+        });
         
         res.set('Content-Type', 'video/mp2t'); 
         response.data.pipe(res);

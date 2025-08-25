@@ -8,7 +8,7 @@ const PORT = process.env.PORT || 3000;
 // Example: 'http://source-stream.com/live'
 const TARGET_BASE_URL = 'http://mains.services'; // <--- CHANGE THIS
 
-app.get('/*.m3u8', async (req, res) => {
+app.get('/*.(m3u|m3u8)', async (req, res) {
     const playlistPath = req.path;
     const targetUrl = `${TARGET_BASE_URL}${playlistPath}`;
 

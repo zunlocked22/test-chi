@@ -7,7 +7,7 @@ const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 
-const TARGET_BASE_URL = 'http://mains.services';
+const TARGET_BASE_URL = 'https://jungotvstream.chanall.tv';
 
 // Spoof headers to make our request look like a real browser
 const BROWSER_HEADERS = {

@@ -12,6 +12,7 @@ const PORT = process.env.PORT || 3000;
 const TARGET_BASE_URL = 'http://mains.services';
 
 // REPLACE YOUR OLD .m3u/.m3u8 ROUTE WITH THIS NEW ONE
+// REPLACE YOUR .m3u/.m3u8 ROUTE WITH THIS FINAL, CORRECTED VERSION
 app.get('/*.(m3u|m3u8)', async (req, res) => {
     const playlistPath = req.path;
     const targetUrl = `${TARGET_BASE_URL}${playlistPath}`;
@@ -21,35 +22,32 @@ app.get('/*.(m3u|m3u8)', async (req, res) => {
     try {
         const response = await axios.get(targetUrl, { 
             responseType: 'text',
-            timeout: 10000 // Add a 10 second timeout
+            timeout: 10000 
         });
 
         console.log('SUCCESS: Playlist content received from source.');
-        // For debugging, let's log the first 300 characters of the playlist
-        console.log('Playlist content starts with:', response.data.substring(0, 300));
 
         const myProxyUrl = `${req.protocol}://${req.get('host')}`;
         
-        // This regex assumes segment URLs are relative (e.g., "segment1.ts")
-        // We may need to change this later based on the actual playlist content
-        const rewrittenPlaylist = response.data.replace(/^(?!#)(.*\.ts)$/gm, `${myProxyUrl}$1`);
+        // --- THIS IS THE CORRECTED LINE ---
+        // It now finds any line that starts with a '/' and rewrites it.
+        const rewrittenPlaylist = response.data.replace(/^\/.+$/gm, (match) => `${myProxyUrl}${match}`);
+
+        console.log('Playlist rewritten successfully. Sending to client.');
 
         res.set('Content-Type', 'application/vnd.apple.mpegurl');
         res.send(rewrittenPlaylist);
 
     } catch (error) {
+        // ... your error handling code can stay the same ...
         console.error('!!! ERROR FETCHING PLAYLIST !!!');
         if (error.response) {
-            // The request was made and the server responded with a status code
-            // that falls out of the range of 2xx
             console.error('Data:', error.response.data);
             console.error('Status:', error.response.status);
             console.error('Headers:', error.response.headers);
         } else if (error.request) {
-            // The request was made but no response was received
             console.error('Request Error: No response received.', error.request);
         } else {
-            // Something happened in setting up the request that triggered an Error
             console.error('General Error:', error.message);
         }
         res.status(500).send('Error fetching M3U8 playlist.');

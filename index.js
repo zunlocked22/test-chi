@@ -30,11 +30,15 @@ app.get('/*', async (req, res) => {
     let originalUrl;
 
     if (requestedPath === streamConfig.alias) {
+        // This is the initial request for the main playlist
         originalUrl = streamConfig.source;
     } else {
-        const chunkName = requestedPath.substring(streamConfig.alias.length).replace(/^\//, '');
-        const sourceBasePath = streamConfig.source.substring(0, streamConfig.source.lastIndexOf('/') + 1);
-        originalUrl = sourceBasePath + chunkName;
+        // This is a subsequent request for a chunk or sub-playlist
+        const chunkPath = requestedPath.substring(streamConfig.alias.length); // Get the path part after the alias
+        
+        // --- THIS IS THE CORRECTED LOGIC ---
+        // The playlist content shows that chunk paths are relative to the domain root
+        originalUrl = sourceBaseUrl.origin + chunkPath;
     }
     
     const sourceHost = sourceBaseUrl.host;
@@ -70,17 +74,12 @@ app.get('/*', async (req, res) => {
             console.log('[INFO] Playlist detected. Rewriting URLs...');
             let playlistText = await response.text();
             
-            // --- THIS IS THE NEW DIAGNOSTIC LOG ---
-            console.log('--- START PLAYLIST CONTENT ---');
-            console.log(playlistText);
-            console.log('--- END PLAYLIST CONTENT ---');
-            // --- END OF DIAGNOSTIC LOG ---
-
             const lines = playlistText.split('\n');
             const rewrittenLines = lines.map(line => {
                 line = line.trim();
                 if (line && !line.startsWith('#')) {
-                    return `${streamConfig.alias}/${line.replace(/^\//, '')}`;
+                    // Prepend our alias to force the player to request it through us
+                    return `${streamConfig.alias}${line}`;
                 }
                 return line;
             });

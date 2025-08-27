@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
-const fetch = require('node-fetch');
-const { Agent } = require('undici'); // Used for proxy support with node-fetch
+// We DO NOT need to require 'node-fetch' anymore. Fetch is built-in!
+const { Agent } = require('undici'); // Used for proxy support with native fetch
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -84,7 +84,7 @@ app.get('/*', async (req, res) => {
         if (!response.ok) {
             throw new Error(`Upstream server responded with status: ${response.status}`);
         }
-
+        
         // Pipe the successful response stream back to the user
         response.body.pipe(res);
 

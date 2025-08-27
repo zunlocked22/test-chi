@@ -19,24 +19,20 @@ app.use((req, res, next) => {
 });
 
 app.get('/*', async (req, res) => {
-    // Find the base configuration for the requested stream
     const streamConfig = STREAMS.find(s => req.path.startsWith(s.alias));
 
     if (!streamConfig) {
         return res.status(404).send('Access Denied: Alias not found.');
     }
 
-    // Determine the full source URL to fetch
     const sourceBaseUrl = new URL(streamConfig.source);
     const requestedPath = req.path;
     let originalUrl;
 
     if (requestedPath === streamConfig.alias) {
-        // This is the initial request for the main playlist
         originalUrl = streamConfig.source;
     } else {
-        // This is a subsequent request for a chunk or sub-playlist
-        const chunkName = requestedPath.substring(streamConfig.alias.length + 1);
+        const chunkName = requestedPath.substring(streamConfig.alias.length).replace(/^\//, '');
         const sourceBasePath = streamConfig.source.substring(0, streamConfig.source.lastIndexOf('/') + 1);
         originalUrl = sourceBasePath + chunkName;
     }
@@ -70,19 +66,16 @@ app.get('/*', async (req, res) => {
 
         const contentType = response.headers.get('content-type') || '';
 
-        // Check if the content is a playlist that needs rewriting
         if (contentType.includes('application/x-mpegurl') || contentType.includes('application/vnd.apple.mpegurl')) {
             console.log('[INFO] Playlist detected. Rewriting URLs...');
             let playlistText = await response.text();
             
-            // Rewrite logic
             const lines = playlistText.split('\n');
             const rewrittenLines = lines.map(line => {
                 line = line.trim();
                 if (line && !line.startsWith('#')) {
-                    // This is a URL to a chunk or another playlist
-                    // Prepend our alias to force the player to request it through us
-                    return `${streamConfig.alias}/${line}`;
+                    // --- THIS IS THE ONE-LINE BUG FIX ---
+                    return `${streamConfig.alias}/${line.replace(/^\//, '')}`;
                 }
                 return line;
             });
@@ -92,7 +85,6 @@ app.get('/*', async (req, res) => {
             res.send(rewrittenPlaylist);
 
         } else {
-            // It's a video chunk (.ts) or other content, just pipe it directly
             console.log(`[INFO] Video chunk or other content detected (${contentType}). Piping directly.`);
             Readable.fromWeb(response.body).pipe(res);
         }

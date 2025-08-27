@@ -35,7 +35,6 @@ app.get('/*', async (req, res) => {
     try {
         const headers = {
             'Host': sourceHost,
-            // --- THIS IS THE ONLY LINE THAT CHANGED ---
             'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20', 
             'Referer': sourceOrigin + '/',
             'Accept': '*/*',
@@ -65,7 +64,13 @@ app.get('/*', async (req, res) => {
         
         const response = await fetch(originalUrl, fetchOptions);
 
+        // --- CRITICAL LOGGING ADDED HERE ---
+        console.log(`[DEBUG] Upstream response status: ${response.status}`);
+        console.log(`[DEBUG] Upstream response headers:`, JSON.stringify(Object.fromEntries(response.headers.entries()), null, 2));
+        // --- END OF CRITICAL LOGGING ---
+
         if (!response.ok) {
+            console.error(`[ERROR] Upstream server responded with non-OK status: ${response.status}`);
             throw new Error(`Upstream server responded with status: ${response.status}`);
         }
         

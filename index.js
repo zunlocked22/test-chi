@@ -1,5 +1,8 @@
+require('dotenv').config(); // This line loads the .env file
+
 const express = require('express');
 const axios = require('axios');
+// ... rest of your code
 const app = express();
 const PORT = process.env.PORT || 3000;
 

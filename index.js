@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
-// We DO NOT need to require 'node-fetch' anymore. Fetch is built-in!
 const { Agent } = require('undici'); // Used for proxy support with native fetch
+const { Readable } = require('stream'); // <-- ADD THIS LINE
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -63,6 +63,7 @@ app.get('/*', async (req, res) => {
             headers: headers,
         };
 
+        // This conditional logic for the proxy is still correct
         if (originalUrl.includes('qgvwnqgr.mexamo.xyz')) {
             console.log(`[INFO] Applying proxy for domain: qgvwnqgr.mexamo.xyz`);
             
@@ -85,8 +86,8 @@ app.get('/*', async (req, res) => {
             throw new Error(`Upstream server responded with status: ${response.status}`);
         }
         
-        // Pipe the successful response stream back to the user
-        response.body.pipe(res);
+        // Use the adapter to convert the stream before piping
+        Readable.fromWeb(response.body).pipe(res); // <-- CHANGE THIS LINE
 
     } catch (error) {
         console.error(`[ERROR] Failed to fetch stream for ${originalUrl}.`);

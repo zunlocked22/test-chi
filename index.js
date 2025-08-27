@@ -1,71 +1,106 @@
 const express = require('express');
 const axios = require('axios');
-const cors = require('cors');
-
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(cors());
+// ######################################################################
+// ###                      YOUR STREAM LIST                          ###
+// ######################################################################
 
-const TARGET_BASE_URL = 'http://qgvwnqgr.mexamo.xyz';
+const STREAMS = [
+    {
+        alias: '/kuroba.kaito/channel/aniplus/289181',
+        source: 'http://qgvwnqgr.mexamo.xyz:80/live/911FA6VS/2T3C7P57/191846.m3u8',
+        type: 'raw'
+    },
+    {
+        alias: '/kuroba.kaito/channel/animax/211181',
+        source: 'http://qgvwnqgr.mexamo.xyz:80/live/911FA6VS/2T3C7P57/45057.m3u8',
+        type: 'raw'
+    },
+    {
+        alias: '/kuroba.kaito/channel/mbcplusanime/331181',
+        source: 'http://qgvwnqgr.mexamo.xyz:80/live/911FA6VS/2T3C7P57/45057.m3u8',
+        type: 'raw'
+    },
+];
 
-// Spoof headers to make our request look like a real browser
-const BROWSER_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36',
-    'Referer': `${TARGET_BASE_URL}/` // Pretend the request is coming from their own site
-};
+// ######################################################################
+// ###        NO NEED TO EDIT BELOW THIS LINE (Proxy Logic)           ###
+// ######################################################################
 
-// Playlist route
-app.get('/*.(m3u|m3u8)', async (req, res) => {
-    const playlistPath = req.path;
-    const targetUrl = `${TARGET_BASE_URL}${playlistPath}`;
-    console.log(`Attempting to fetch playlist: ${targetUrl}`);
-
-    try {
-        const response = await axios.get(targetUrl, { 
-            responseType: 'text',
-            timeout: 10000,
-            headers: BROWSER_HEADERS // Use the spoofed headers
-        });
-        console.log('SUCCESS: Playlist content received from source.');
-
-        const myProxyUrl = `https://${req.get('host')}`;
-        const rewrittenPlaylist = response.data.replace(/^\/.+$/gm, (match) => `${myProxyUrl}${match}`);
-        
-        console.log(`Rewriting segments to use base URL: ${myProxyUrl}`);
-        res.set('Content-Type', 'application/vnd.apple.mpegurl');
-        res.send(rewrittenPlaylist);
-    } catch (error) {
-        console.error('!!! ERROR FETCHING PLAYLIST !!!');
-        if (error.response) {
-            console.error('Status:', error.response.status);
-        } else {
-            console.error('General Error:', error.message);
-        }
-        res.status(500).send('Error fetching M3U8 playlist.');
-    }
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    next();
 });
 
-// Video Segment route
-app.get('/play/hls/*', async (req, res) => {
-    const segmentPath = req.path;
-    const targetUrl = `${TARGET_BASE_URL}${segmentPath}`;
+app.get('/*', async (req, res) => {
+    const streamConfig = STREAMS.find(s => s.alias === req.path);
+
+    if (!streamConfig) {
+        return res.status(404).send('Access Denied: Alias not found.');
+    }
+
+    const originalUrl = streamConfig.source;
+    const streamType = streamConfig.type;
+    const sourceHost = new URL(originalUrl).host;
+    const sourceOrigin = new URL(originalUrl).origin;
+
+    console.log(`[INFO] Request for alias: ${streamConfig.alias} -> Source: ${originalUrl}`);
 
     try {
-        console.log(`Fetching HLS segment: ${targetUrl}`);
-        const response = await axios.get(targetUrl, { 
+        // 1. Set up the base Axios configuration with full browser headers
+        // This helps defeat header checks and "406 Not Acceptable" errors.
+        const axiosConfig = {
+            method: 'get',
+            url: originalUrl,
             responseType: 'stream',
-            headers: BROWSER_HEADERS // Use the spoofed headers
-        });
+            headers: {
+                'Host': sourceHost,
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+                'Referer': sourceOrigin + '/',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5'
+            },
+            // Important for handling redirects gracefully
+            maxRedirects: 5,
+        };
+
+        // 2. Conditionally add the proxy ONLY for the problematic domain
+        // This uses the Environment Variables you set on Render.
+        if (originalUrl.includes('qgvwnqgr.mexamo.xyz')) {
+            console.log(`[INFO] Applying proxy for domain: qgvwnqgr.mexamo.xyz`);
+            
+            const proxyConfig = {
+                host: process.env.PROXY_HOST,
+                port: parseInt(process.env.PROXY_PORT, 10),
+                auth: {
+                    username: process.env.PROXY_USERNAME,
+                    password: process.env.PROXY_PASSWORD,
+                },
+            };
+
+            // Only add proxy to config if the HOST variable is actually set
+            if (proxyConfig.host) {
+                axiosConfig.proxy = proxyConfig;
+            } else {
+                console.log('[WARNING] PROXY_HOST environment variable not set. Proxy will not be used.');
+            }
+        }
         
-        res.set('Content-Type', 'video/mp2t'); 
+        // 3. Make the request using the prepared configuration
+        const response = await axios(axiosConfig);
+
+        // Pipe the successful response back to the user
         response.data.pipe(res);
+
     } catch (error) {
-        console.error('Error fetching HLS segment:', error.message);
-        res.status(500).send('Error fetching HLS segment.');
+        console.error(`[ERROR] Failed to fetch stream for ${originalUrl}.`);
+        console.error(`[ERROR] Message: ${error.message}`);
+        res.status(502).send('Error fetching from the original server.');
     }
 });
 
 app.listen(PORT, () => {
-    console.log(`M3U8 Proxy server is running on port ${PORT}`);
+    console.log(`Multi-stream proxy server listening on port ${PORT}`);
 });

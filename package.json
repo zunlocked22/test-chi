@@ -1,14 +1,18 @@
 {
-  "name": "stream-proxy",
+  "name": "hls-proxy-server",
   "version": "1.0.0",
-  "description": "A simple M3U8 proxy.",
+  "description": "A proxy server for HLS streams.",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
+  "author": "",
+  "license": "ISC",
   "dependencies": {
-  "axios": "^1.7.2",
-  "dotenv": "^16.4.5", 
-  "express": "^4.19.2"
-}
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "node-fetch": "^3.3.2",
+    "undici": "^6.19.2"
+  }
 }

@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const { Agent } = require('undici');
 const { Readable } = require('stream');
-const crypto = require('crypto'); // Built-in Node.js module for random numbers
+const crypto = require('crypto');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -29,11 +29,20 @@ app.get('/*', async (req, res) => {
     const sourceBaseUrl = new URL(streamConfig.source);
     const requestedPath = req.path;
     let originalUrl;
+    
+    // --- NEW SESSION MANAGEMENT LOGIC ---
+    let sessionId = req.query.sid; // Look for a session ID in the query parameter
 
     if (requestedPath === streamConfig.alias) {
         originalUrl = streamConfig.source;
+        // This is the first request, so we generate a NEW session ID
+        sessionId = crypto.randomBytes(8).toString('hex');
     } else {
-        const chunkPath = requestedPath.substring(streamConfig.alias.length);
+        if (!sessionId) {
+            // If a chunk is requested without a session ID, we can't proceed
+            return res.status(400).send("Bad Request: Missing session ID for chunk.");
+        }
+        const chunkPath = req.path.substring(streamConfig.alias.length);
         originalUrl = sourceBaseUrl.origin + chunkPath;
     }
     
@@ -43,26 +52,15 @@ app.get('/*', async (req, res) => {
     console.log(`[INFO] Request for: ${requestedPath} -> Fetching source: ${originalUrl}`);
 
     try {
-        const headers = {
-            'Host': sourceHost,
-            'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
-            'Referer': sourceOrigin + '/',
-            'Accept': '*/*',
-        };
-        
+        const headers = { 'Host': sourceHost, 'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20', 'Referer': sourceOrigin + '/', 'Accept': '*/*' };
         const fetchOptions = { method: 'GET', headers: headers };
 
         console.log(`[INFO] Applying proxy for domain: ${sourceHost}`);
-        
-        // --- NEW SESSION LOGIC ---
-        // Generate a random session ID for each stream playback
-        const sessionId = crypto.randomBytes(8).toString('hex');
-        const proxyUsernameWithSession = `${process.env.PROXY_USERNAME}-sid-${sessionId}`;
         console.log(`[INFO] Using sticky session ID: ${sessionId}`);
         
+        const proxyUsernameWithSession = `${process.env.PROXY_USERNAME}-sid-${sessionId}`;
         const proxyUrl = `http://${proxyUsernameWithSession}:${process.env.PROXY_PASSWORD}@${process.env.PROXY_HOST}:${process.env.PROXY_PORT}`;
-        // --- END NEW SESSION LOGIC ---
-
+        
         if (process.env.PROXY_HOST) {
             fetchOptions.dispatcher = new Agent({ connect: { proxy: new URL(proxyUrl) } });
         }
@@ -70,22 +68,21 @@ app.get('/*', async (req, res) => {
         const response = await fetch(originalUrl, fetchOptions);
 
         if (!response.ok) {
-            // Log the status here to see the 403 error
-            console.error(`[ERROR] Upstream server responded with non-OK status: ${response.status}`);
             throw new Error(`Upstream server responded with status: ${response.status}`);
         }
 
         const contentType = response.headers.get('content-type') || '';
 
-        if (contentType.includes('application/x-mpegurl') || contentType.includes('application/vnd.apple.mpegurl')) {
-            console.log('[INFO] Playlist detected. Rewriting URLs...');
+        if (contentType.includes('application/x-mpegurl')) {
+            console.log('[INFO] Playlist detected. Rewriting URLs to include session ID...');
             let playlistText = await response.text();
             
             const lines = playlistText.split('\n');
             const rewrittenLines = lines.map(line => {
                 line = line.trim();
                 if (line && !line.startsWith('#')) {
-                    return `${streamConfig.alias}${line}`;
+                    // We now add the session ID as a query parameter for all subsequent requests
+                    return `${streamConfig.alias}${line}?sid=${sessionId}`;
                 }
                 return line;
             });
@@ -95,7 +92,7 @@ app.get('/*', async (req, res) => {
             res.send(rewrittenPlaylist);
 
         } else {
-            console.log(`[INFO] Video chunk or other content detected (${contentType}). Piping directly.`);
+            console.log(`[INFO] Video chunk detected. Piping directly.`);
             Readable.fromWeb(response.body).pipe(res);
         }
 

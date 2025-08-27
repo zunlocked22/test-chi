@@ -9,9 +9,8 @@ const STREAMS = [
     {
         alias: '/kuroba.kaito/channel/aniplus/289181',
         source: 'http://qgvwnqgr.mexamo.xyz:80/live/911FA6VS/2T3C7P57/191846.m3u8',
-        type: 'raw'
     },
-    // ... other streams
+    // Add other streams here if needed
 ];
 
 app.use((req, res, next) => {
@@ -20,61 +19,83 @@ app.use((req, res, next) => {
 });
 
 app.get('/*', async (req, res) => {
-    const streamConfig = STREAMS.find(s => s.alias === req.path);
+    // Find the base configuration for the requested stream
+    const streamConfig = STREAMS.find(s => req.path.startsWith(s.alias));
 
     if (!streamConfig) {
         return res.status(404).send('Access Denied: Alias not found.');
     }
 
-    const originalUrl = streamConfig.source;
-    const sourceHost = new URL(originalUrl).host;
-    const sourceOrigin = new URL(originalUrl).origin;
+    // Determine the full source URL to fetch
+    const sourceBaseUrl = new URL(streamConfig.source);
+    const requestedPath = req.path;
+    let originalUrl;
 
-    console.log(`[INFO] Request for alias: ${streamConfig.alias} -> Source: ${originalUrl}`);
+    if (requestedPath === streamConfig.alias) {
+        // This is the initial request for the main playlist
+        originalUrl = streamConfig.source;
+    } else {
+        // This is a subsequent request for a chunk or sub-playlist
+        const chunkName = requestedPath.substring(streamConfig.alias.length + 1);
+        const sourceBasePath = streamConfig.source.substring(0, streamConfig.source.lastIndexOf('/') + 1);
+        originalUrl = sourceBasePath + chunkName;
+    }
+    
+    const sourceHost = sourceBaseUrl.host;
+    const sourceOrigin = sourceBaseUrl.origin;
+
+    console.log(`[INFO] Request for: ${requestedPath} -> Fetching source: ${originalUrl}`);
 
     try {
         const headers = {
             'Host': sourceHost,
-            'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20', 
+            'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
             'Referer': sourceOrigin + '/',
             'Accept': '*/*',
-            'Accept-Language': 'en-US,en;q=0.5'
         };
         
-        let fetchOptions = {
-            method: 'GET',
-            headers: headers,
-        };
+        const fetchOptions = { method: 'GET', headers: headers };
 
-        if (originalUrl.includes('qgvwnqgr.mexamo.xyz')) {
-            console.log(`[INFO] Applying proxy for domain: qgvwnqgr.mexamo.xyz`);
-            
-            const proxyUrl = `http://${process.env.PROXY_USERNAME}:${process.env.PROXY_PASSWORD}@${process.env.PROXY_HOST}:${process.env.PROXY_PORT}`;
-            
-            if (process.env.PROXY_HOST) {
-                fetchOptions.dispatcher = new Agent({
-                    connect: {
-                        proxy: new URL(proxyUrl),
-                    },
-                });
-            } else {
-                 console.log('[WARNING] PROXY_HOST environment variable not set. Proxy will not be used.');
-            }
+        console.log(`[INFO] Applying proxy for domain: ${sourceHost}`);
+        const proxyUrl = `http://${process.env.PROXY_USERNAME}:${process.env.PROXY_PASSWORD}@${process.env.PROXY_HOST}:${process.env.PROXY_PORT}`;
+        if (process.env.PROXY_HOST) {
+            fetchOptions.dispatcher = new Agent({ connect: { proxy: new URL(proxyUrl) } });
         }
-        
+
         const response = await fetch(originalUrl, fetchOptions);
 
-        // --- CRITICAL LOGGING ADDED HERE ---
-        console.log(`[DEBUG] Upstream response status: ${response.status}`);
-        console.log(`[DEBUG] Upstream response headers:`, JSON.stringify(Object.fromEntries(response.headers.entries()), null, 2));
-        // --- END OF CRITICAL LOGGING ---
-
         if (!response.ok) {
-            console.error(`[ERROR] Upstream server responded with non-OK status: ${response.status}`);
             throw new Error(`Upstream server responded with status: ${response.status}`);
         }
-        
-        Readable.fromWeb(response.body).pipe(res);
+
+        const contentType = response.headers.get('content-type') || '';
+
+        // Check if the content is a playlist that needs rewriting
+        if (contentType.includes('application/x-mpegurl') || contentType.includes('application/vnd.apple.mpegurl')) {
+            console.log('[INFO] Playlist detected. Rewriting URLs...');
+            let playlistText = await response.text();
+            
+            // Rewrite logic
+            const lines = playlistText.split('\n');
+            const rewrittenLines = lines.map(line => {
+                line = line.trim();
+                if (line && !line.startsWith('#')) {
+                    // This is a URL to a chunk or another playlist
+                    // Prepend our alias to force the player to request it through us
+                    return `${streamConfig.alias}/${line}`;
+                }
+                return line;
+            });
+            
+            const rewrittenPlaylist = rewrittenLines.join('\n');
+            res.set('Content-Type', contentType);
+            res.send(rewrittenPlaylist);
+
+        } else {
+            // It's a video chunk (.ts) or other content, just pipe it directly
+            console.log(`[INFO] Video chunk or other content detected (${contentType}). Piping directly.`);
+            Readable.fromWeb(response.body).pipe(res);
+        }
 
     } catch (error) {
         console.error(`[ERROR] Failed to fetch stream for ${originalUrl}.`);

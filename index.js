@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const { Agent } = require('undici');
 const { Readable } = require('stream');
+const crypto = require('crypto'); // Built-in Node.js module for random numbers
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -30,14 +31,9 @@ app.get('/*', async (req, res) => {
     let originalUrl;
 
     if (requestedPath === streamConfig.alias) {
-        // This is the initial request for the main playlist
         originalUrl = streamConfig.source;
     } else {
-        // This is a subsequent request for a chunk or sub-playlist
-        const chunkPath = requestedPath.substring(streamConfig.alias.length); // Get the path part after the alias
-        
-        // --- THIS IS THE CORRECTED LOGIC ---
-        // The playlist content shows that chunk paths are relative to the domain root
+        const chunkPath = requestedPath.substring(streamConfig.alias.length);
         originalUrl = sourceBaseUrl.origin + chunkPath;
     }
     
@@ -57,7 +53,16 @@ app.get('/*', async (req, res) => {
         const fetchOptions = { method: 'GET', headers: headers };
 
         console.log(`[INFO] Applying proxy for domain: ${sourceHost}`);
-        const proxyUrl = `http://${process.env.PROXY_USERNAME}:${process.env.PROXY_PASSWORD}@${process.env.PROXY_HOST}:${process.env.PROXY_PORT}`;
+        
+        // --- NEW SESSION LOGIC ---
+        // Generate a random session ID for each stream playback
+        const sessionId = crypto.randomBytes(8).toString('hex');
+        const proxyUsernameWithSession = `${process.env.PROXY_USERNAME}-sid-${sessionId}`;
+        console.log(`[INFO] Using sticky session ID: ${sessionId}`);
+        
+        const proxyUrl = `http://${proxyUsernameWithSession}:${process.env.PROXY_PASSWORD}@${process.env.PROXY_HOST}:${process.env.PROXY_PORT}`;
+        // --- END NEW SESSION LOGIC ---
+
         if (process.env.PROXY_HOST) {
             fetchOptions.dispatcher = new Agent({ connect: { proxy: new URL(proxyUrl) } });
         }
@@ -65,6 +70,8 @@ app.get('/*', async (req, res) => {
         const response = await fetch(originalUrl, fetchOptions);
 
         if (!response.ok) {
+            // Log the status here to see the 403 error
+            console.error(`[ERROR] Upstream server responded with non-OK status: ${response.status}`);
             throw new Error(`Upstream server responded with status: ${response.status}`);
         }
 
@@ -78,7 +85,6 @@ app.get('/*', async (req, res) => {
             const rewrittenLines = lines.map(line => {
                 line = line.trim();
                 if (line && !line.startsWith('#')) {
-                    // Prepend our alias to force the player to request it through us
                     return `${streamConfig.alias}${line}`;
                 }
                 return line;

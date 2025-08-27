@@ -1,8 +1,7 @@
-require('dotenv').config(); // This line loads the .env file
-
+require('dotenv').config();
 const express = require('express');
-const axios = require('axios');
-// ... rest of your code
+const fetch = require('node-fetch');
+const { Agent } = require('undici'); // Used for proxy support with node-fetch
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -45,57 +44,49 @@ app.get('/*', async (req, res) => {
     }
 
     const originalUrl = streamConfig.source;
-    const streamType = streamConfig.type;
     const sourceHost = new URL(originalUrl).host;
     const sourceOrigin = new URL(originalUrl).origin;
 
     console.log(`[INFO] Request for alias: ${streamConfig.alias} -> Source: ${originalUrl}`);
 
     try {
-        // 1. Set up the base Axios configuration with full browser headers
-        // This helps defeat header checks and "406 Not Acceptable" errors.
-        const axiosConfig = {
-            method: 'get',
-            url: originalUrl,
-            responseType: 'stream',
-            headers: {
-                'Host': sourceHost,
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-                'Referer': sourceOrigin + '/',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5'
-            },
-            // Important for handling redirects gracefully
-            maxRedirects: 5,
+        const headers = {
+            'Host': sourceHost,
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+            'Referer': sourceOrigin + '/',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5'
+        };
+        
+        let fetchOptions = {
+            method: 'GET',
+            headers: headers,
         };
 
-        // 2. Conditionally add the proxy ONLY for the problematic domain
-        // This uses the Environment Variables you set on Render.
         if (originalUrl.includes('qgvwnqgr.mexamo.xyz')) {
             console.log(`[INFO] Applying proxy for domain: qgvwnqgr.mexamo.xyz`);
             
-            const proxyConfig = {
-                host: process.env.PROXY_HOST,
-                port: parseInt(process.env.PROXY_PORT, 10),
-                auth: {
-                    username: process.env.PROXY_USERNAME,
-                    password: process.env.PROXY_PASSWORD,
-                },
-            };
-
-            // Only add proxy to config if the HOST variable is actually set
-            if (proxyConfig.host) {
-                axiosConfig.proxy = proxyConfig;
+            const proxyUrl = `http://${process.env.PROXY_USERNAME}:${process.env.PROXY_PASSWORD}@${process.env.PROXY_HOST}:${process.env.PROXY_PORT}`;
+            
+            if (process.env.PROXY_HOST) {
+                fetchOptions.dispatcher = new Agent({
+                    connect: {
+                        proxy: new URL(proxyUrl),
+                    },
+                });
             } else {
-                console.log('[WARNING] PROXY_HOST environment variable not set. Proxy will not be used.');
+                 console.log('[WARNING] PROXY_HOST environment variable not set. Proxy will not be used.');
             }
         }
-        
-        // 3. Make the request using the prepared configuration
-        const response = await axios(axiosConfig);
 
-        // Pipe the successful response back to the user
-        response.data.pipe(res);
+        const response = await fetch(originalUrl, fetchOptions);
+
+        if (!response.ok) {
+            throw new Error(`Upstream server responded with status: ${response.status}`);
+        }
+
+        // Pipe the successful response stream back to the user
+        response.body.pipe(res);
 
     } catch (error) {
         console.error(`[ERROR] Failed to fetch stream for ${originalUrl}.`);

@@ -70,11 +70,16 @@ app.get('/*', async (req, res) => {
             console.log('[INFO] Playlist detected. Rewriting URLs...');
             let playlistText = await response.text();
             
+            // --- THIS IS THE NEW DIAGNOSTIC LOG ---
+            console.log('--- START PLAYLIST CONTENT ---');
+            console.log(playlistText);
+            console.log('--- END PLAYLIST CONTENT ---');
+            // --- END OF DIAGNOSTIC LOG ---
+
             const lines = playlistText.split('\n');
             const rewrittenLines = lines.map(line => {
                 line = line.trim();
                 if (line && !line.startsWith('#')) {
-                    // --- THIS IS THE ONE-LINE BUG FIX ---
                     return `${streamConfig.alias}/${line.replace(/^\//, '')}`;
                 }
                 return line;
